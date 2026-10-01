@@ -1,0 +1,32 @@
+{
+  "uid": "gh-lakehouse",
+  "title": "GH Archive streaming lakehouse",
+  "timezone": "utc",
+  "refresh": "15s",
+  "schemaVersion": 39,
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {"id": 1, "type": "timeseries", "title": "Broker: messages produced / s", "gridPos": {"x": 0, "y": 0, "w": 12, "h": 7},
+     "datasource": {"uid": "prom"},
+     "targets": [{"expr": "sum(rate(redpanda_kafka_request_bytes_total{redpanda_request=\"produce\"}[1m]))", "legendFormat": "produce bytes/s"}]},
+    {"id": 2, "type": "timeseries", "title": "Consumer group lag (offsets)", "gridPos": {"x": 12, "y": 0, "w": 12, "h": 7},
+     "datasource": {"uid": "prom"},
+     "targets": [{"expr": "sum by (redpanda_group) (redpanda_kafka_consumer_group_lag_sum)", "legendFormat": "{{redpanda_group}}"}]},
+    {"id": 3, "type": "stat", "title": "Event-time freshness (s)", "gridPos": {"x": 0, "y": 7, "w": 6, "h": 5},
+     "datasource": {"uid": "prom"}, "targets": [{"expr": "lakehouse_events_freshness_seconds"}],
+     "fieldConfig": {"defaults": {"unit": "s", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 600}, {"color": "red", "value": 1800}]}}}},
+    {"id": 4, "type": "stat", "title": "End-to-end latency p50 / p95 (s)", "gridPos": {"x": 6, "y": 7, "w": 6, "h": 5},
+     "datasource": {"uid": "prom"},
+     "targets": [{"expr": "lakehouse_events_e2e_latency_p50_seconds", "legendFormat": "p50"}, {"expr": "lakehouse_events_e2e_latency_p95_seconds", "legendFormat": "p95"}],
+     "fieldConfig": {"defaults": {"unit": "s"}}},
+    {"id": 5, "type": "stat", "title": "Rows in gh.events", "gridPos": {"x": 12, "y": 7, "w": 6, "h": 5},
+     "datasource": {"uid": "prom"}, "targets": [{"expr": "lakehouse_table_rows{table=\"gh.events\"}"}]},
+    {"id": 6, "type": "stat", "title": "SCD2 keys with more than one current row", "gridPos": {"x": 18, "y": 7, "w": 6, "h": 5},
+     "datasource": {"uid": "prom"}, "targets": [{"expr": "lakehouse_scd2_keys_with_multiple_current"}],
+     "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}}},
+    {"id": 7, "type": "timeseries", "title": "Data files per table (small-file pressure; drops after `make maintain`)", "gridPos": {"x": 0, "y": 12, "w": 12, "h": 7},
+     "datasource": {"uid": "prom"}, "targets": [{"expr": "lakehouse_table_data_files", "legendFormat": "{{table}}"}]},
+    {"id": 8, "type": "timeseries", "title": "Average data file size (MB)", "gridPos": {"x": 12, "y": 12, "w": 12, "h": 7},
+     "datasource": {"uid": "prom"}, "targets": [{"expr": "lakehouse_table_avg_file_mb", "legendFormat": "{{table}}"}]}
+  ]
+}

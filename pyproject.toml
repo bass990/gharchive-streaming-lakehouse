@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gharchive-streaming-lakehouse"
+version = "0.1.0"
+description = "Streaming lakehouse on the GitHub public event firehose: Kafka (Redpanda) + Avro schema registry -> Spark Structured Streaming with exactly-once writes into Apache Iceberg, Debezium CDC merged as SCD2, replay/backfill, Prometheus/Grafana, FinOps model"
+requires-python = ">=3.12,<3.13"
+license = { text = "MIT" }
+authors = [{ name = "Mamadou Bassirou Diallo" }]
+dependencies = [
+    "confluent-kafka>=2.5",
+    "fastavro>=1.9",
+    "requests>=2.32",
+    "orjson>=3.10",
+    "python-dotenv>=1.0",
+    "pyiceberg[s3fs,pyarrow,duckdb]>=0.8",
+    "duckdb>=1.1",
+    "psycopg[binary]>=3.2",
+    "prometheus-client>=0.20",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pyyaml>=6.0",
+    "pytz>=2024.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3", "httpx>=0.27", "ruff>=0.7"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# the Spark jobs run on the image's Python 3.8: no datetime.UTC
+"streaming/*" = ["UP017"]

@@ -1,0 +1,178 @@
+# Streaming lakehouse, local edition. One `docker compose up -d` gives you:
+#
+#   redpanda          Kafka API :19092 (host) / redpanda:9092 (containers), Schema Registry :18081,
+#                     Admin + Prometheus metrics :19644
+#   console           Redpanda Console UI :8085 (topics, schemas, consumer groups, lag)
+#   minio (+init)     S3-compatible object store :9010 (API) / :9011 (console), bucket gh-lakehouse
+#   iceberg-rest      Iceberg REST catalog :8182 over MinIO
+#   postgres          source database for CDC (wal_level=logical) :5434
+#   connect           Kafka Connect with the Debezium Postgres connector :8083
+#   spark             Spark 3.5 with Iceberg + Kafka + Avro packages; runs the streaming jobs
+#   prometheus        :9090   scrapes redpanda + the pipeline exporter
+#   grafana           :3001   provisioned dashboard "GH Archive streaming lakehouse"
+#
+# Memory: ~5 GB with everything up. `make up-core` starts only redpanda + minio + iceberg-rest.
+
+x-minio-env: &minio-env
+  MINIO_ROOT_USER: ${MINIO_ROOT_USER:-lakehouse}
+  MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-lakehouse-local}
+
+services:
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.7
+    command:
+      - redpanda start
+      - --smp 1
+      - --memory 1G
+      - --overprovisioned
+      - --node-id 0
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      - --mode dev-container
+    ports: ["19092:19092", "18081:18081", "19644:9644"]
+    volumes: ["redpanda-data:/var/lib/redpanda/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  console:
+    image: docker.redpanda.com/redpandadata/console:v2.7.2
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+      KAFKA_SCHEMAREGISTRY_ENABLED: "true"
+      KAFKA_SCHEMAREGISTRY_URLS: http://redpanda:8081
+      CONNECT_ENABLED: "true"
+      CONNECT_CLUSTERS_NAME: local
+      CONNECT_CLUSTERS_URL: http://connect:8083
+    ports: ["8085:8080"]
+
+  minio:
+    image: quay.io/minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment: *minio-env
+    ports: ["9010:9000", "9011:9001"]
+    volumes: ["minio-data:/data"]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio-init:
+    image: quay.io/minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-lakehouse} ${MINIO_ROOT_PASSWORD:-lakehouse-local} &&
+      mc mb -p local/${LAKEHOUSE_BUCKET:-gh-lakehouse} && echo bucket-ready"
+
+  iceberg-rest:
+    image: tabulario/iceberg-rest:latest
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-lakehouse}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-lakehouse-local}
+      AWS_REGION: us-east-1
+      CATALOG_WAREHOUSE: s3://${LAKEHOUSE_BUCKET:-gh-lakehouse}/warehouse
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://minio:9000
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+    ports: ["8182:8181"]
+
+  postgres:
+    image: quay.io/debezium/postgres:16
+    environment:
+      POSTGRES_USER: ${PG_USER:-gh}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-gh-local}
+      POSTGRES_DB: ${PG_DB:-gh}
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_wal_senders=4", "-c", "max_replication_slots=4"]
+    ports: ["5434:5432"]
+    volumes:
+      - "pg-data:/var/lib/postgresql/data"
+      - "./cdc/init.sql:/docker-entrypoint-initdb.d/init.sql:ro"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-gh}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  connect:
+    image: quay.io/debezium/connect:2.7
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      BOOTSTRAP_SERVERS: redpanda:9092
+      GROUP_ID: gh-connect
+      CONFIG_STORAGE_TOPIC: _connect_configs
+      OFFSET_STORAGE_TOPIC: _connect_offsets
+      STATUS_STORAGE_TOPIC: _connect_status
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+    ports: ["8083:8083"]
+
+  spark:
+    image: apache/spark:3.5.3-python3
+    user: root
+    depends_on:
+      iceberg-rest:
+        condition: service_started
+      redpanda:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-lakehouse}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-lakehouse-local}
+      AWS_REGION: us-east-1
+      KAFKA_BOOTSTRAP: redpanda:9092
+      SCHEMA_REGISTRY: http://redpanda:8081
+      ICEBERG_REST_URI: http://iceberg-rest:8181
+      S3_ENDPOINT: http://minio:9000
+      LAKEHOUSE_BUCKET: ${LAKEHOUSE_BUCKET:-gh-lakehouse}
+      SPARK_SUBMIT_OPTS: -Divy.home=/opt/ivy
+    volumes:
+      - "./streaming:/app/streaming:ro"
+      - "./schemas:/app/schemas:ro"
+      - "spark-ivy:/opt/ivy"           # Maven package cache so the second start is fast
+      - "spark-checkpoints:/checkpoints"
+    ports: ["4040:4040"]
+    entrypoint: ["/bin/bash", "-c"]
+    command: ["sleep infinity"]        # jobs are launched with `make stream` / `make cdc` (docker compose exec)
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    volumes: ["./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+    volumes:
+      - "./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro"
+      - "./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro"
+    ports: ["3001:3000"]
+
+volumes:
+  redpanda-data:
+  minio-data:
+  pg-data:
+  spark-ivy:
+  spark-checkpoints:

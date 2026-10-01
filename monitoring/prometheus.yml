@@ -1,0 +1,14 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  # broker: throughput, partition sizes, consumer-group lag (redpanda_kafka_consumer_group_lag_*)
+  - job_name: redpanda
+    metrics_path: /public_metrics
+    static_configs:
+      - targets: ["redpanda:9644"]
+
+  # pipeline exporter (host process): rows per table, event-time freshness, end-to-end latency, small-file count
+  - job_name: lakehouse
+    static_configs:
+      - targets: ["host.docker.internal:9108"]

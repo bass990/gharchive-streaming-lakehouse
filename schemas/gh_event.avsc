@@ -1,0 +1,20 @@
+{
+  "type": "record",
+  "name": "GitHubEvent",
+  "namespace": "gharchive.v1",
+  "doc": "One public GitHub event as published by GH Archive, flattened to the fields the lakehouse keys on. Payload kept as JSON text so schema evolution of the ~15 payload shapes never breaks the topic.",
+  "fields": [
+    {"name": "id", "type": "string", "doc": "GitHub event id; the deduplication key"},
+    {"name": "type", "type": "string", "doc": "PushEvent, PullRequestEvent, WatchEvent, ..."},
+    {"name": "created_at", "type": {"type": "long", "logicalType": "timestamp-millis"}, "doc": "event time (UTC); watermark column"},
+    {"name": "actor_id", "type": "long"},
+    {"name": "actor_login", "type": "string"},
+    {"name": "repo_id", "type": "long"},
+    {"name": "repo_name", "type": "string", "doc": "owner/name; the partition key on the topic"},
+    {"name": "org_login", "type": ["null", "string"], "default": null},
+    {"name": "is_public", "type": "boolean", "default": true},
+    {"name": "payload_json", "type": "string", "doc": "raw payload object as JSON text"},
+    {"name": "source_file", "type": "string", "doc": "GH Archive hour file this event came from, e.g. 2025-09-22-15"},
+    {"name": "ingested_at", "type": {"type": "long", "logicalType": "timestamp-millis"}, "doc": "producer wall clock; end-to-end latency = commit time - this"}
+  ]
+}
