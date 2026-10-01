@@ -20,7 +20,7 @@ SPARK_SUBMIT = MSYS_NO_PATHCONV=1 docker compose exec -T $(CLOUD_ENV) spark /opt
 
 help:
 	@echo "GitHub Archive streaming lakehouse"
-	@echo "  up            start everything (redpanda, console, minio, iceberg-rest, postgres, debezium, spark, prometheus, grafana)"
+	@echo "  up            start everything (redpanda, console, object store, iceberg-rest, postgres, debezium, spark, prometheus, grafana)"
 	@echo "  up-core       only the broker + object store + catalog"
 	@echo "  produce       replay a GH Archive hour onto Kafka as Avro     (HOUR=2025-09-22-15 SPEED=0)"
 	@echo "  stream        Spark Structured Streaming: Kafka -> Iceberg events + 5-min windows (exactly once)"

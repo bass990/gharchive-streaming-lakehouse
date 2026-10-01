@@ -3,8 +3,8 @@
 #   redpanda          Kafka API :19092 (host) / redpanda:9092 (containers), Schema Registry :18081,
 #                     Admin + Prometheus metrics :19644
 #   console           Redpanda Console UI :8085 (topics, schemas, consumer groups, lag)
-#   minio (+init)     S3-compatible object store :9010 (API) / :9011 (console), bucket gh-lakehouse
-#   iceberg-rest      Iceberg REST catalog :8182 over MinIO
+#   minio (+init)     S3-compatible object store (RustFS) :9010 (API) / :9011 (console), bucket gh-lakehouse
+#   iceberg-rest      Iceberg REST catalog :8182 over the object store
 #   postgres          source database for CDC (wal_level=logical) :5434
 #   connect           Kafka Connect with the Debezium Postgres connector :8083
 #   spark             Spark 3.5 with Iceberg + Kafka + Avro packages; runs the streaming jobs
@@ -16,6 +16,9 @@
 x-minio-env: &minio-env
   MINIO_ROOT_USER: ${MINIO_ROOT_USER:-lakehouse}
   MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-lakehouse-local}
+  RUSTFS_ACCESS_KEY: ${MINIO_ROOT_USER:-lakehouse}
+  RUSTFS_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-lakehouse-local}
+  RUSTFS_VOLUMES: /data
 
 services:
   redpanda:
@@ -54,27 +57,39 @@ services:
       CONNECT_CLUSTERS_URL: http://connect:8083
     ports: ["8085:8080"]
 
+  # Object store. The service keeps the name `minio` (every endpoint points at
+  # http://minio:9000) but the default image is RustFS: MinIO's community images
+  # moved behind a login in 2025 and anonymous pulls fail, which broke fresh clones
+  # and CI. Same S3 API, same ports. To keep an already-cached MinIO image over an
+  # existing MinIO volume, set in .env:
+  #   OBJECT_STORE_IMAGE=quay.io/minio/minio:latest
+  #   OBJECT_STORE_COMMAND=server /data --console-address :9001
   minio:
-    image: quay.io/minio/minio:latest
-    command: server /data --console-address ":9001"
+    image: ${OBJECT_STORE_IMAGE:-rustfs/rustfs:latest}
+    command: ${OBJECT_STORE_COMMAND:-rustfs}
     environment: *minio-env
     ports: ["9010:9000", "9011:9001"]
     volumes: ["minio-data:/data"]
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9000/minio/health/live || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 20
 
   minio-init:
-    image: quay.io/minio/mc:latest
+    image: amazon/aws-cli:latest
     depends_on:
       minio:
         condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-lakehouse}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-lakehouse-local}
+      AWS_DEFAULT_REGION: us-east-1
     entrypoint: >
       /bin/sh -c "
-      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-lakehouse} ${MINIO_ROOT_PASSWORD:-lakehouse-local} &&
-      mc mb -p local/${LAKEHOUSE_BUCKET:-gh-lakehouse} && echo bucket-ready"
+      aws --endpoint-url http://minio:9000 s3api head-bucket --bucket ${LAKEHOUSE_BUCKET:-gh-lakehouse} 2>/dev/null ||
+      aws --endpoint-url http://minio:9000 s3 mb s3://${LAKEHOUSE_BUCKET:-gh-lakehouse};
+      echo bucket-ready"
 
   iceberg-rest:
     image: tabulario/iceberg-rest:latest

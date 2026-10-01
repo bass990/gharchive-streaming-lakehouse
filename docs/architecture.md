@@ -106,7 +106,7 @@ counts before/after. `docs/finops.md` translates those counts into dollars.
 
 ## Portability
 
-Local: Redpanda + MinIO + Iceberg REST + Debezium Connect + Spark in
+Local: Redpanda + RustFS (S3 API) + Iceberg REST + Debezium Connect + Spark in
 containers. AWS: `deploy/aws` provisions S3 + Glue + budget (applied) and MSK
 Serverless behind `create_msk` (not applied, cost). The Spark jobs switch to
 the Glue catalog by changing `spark.sql.catalog.lh.type` to `glue` and

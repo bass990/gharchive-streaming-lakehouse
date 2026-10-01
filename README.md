@@ -120,6 +120,8 @@ Five failures from the actual runs, with how I noticed each one. The logs and th
 
 5. **Jobs that died with the shell that started them.** I launched the Spark jobs from a background subshell; they died the moment that shell returned, and later the CDC driver died by itself after about 15 idle hours. In both cases the first sign was consumer lag flat-lining. Finding which of three identical `spark-submit` processes to kill meant reading each one's environment from `/proc/<pid>/environ` for its `LAKEHOUSE_TARGET`. The jobs now print one JSON line per trigger (input rows, rows dropped as late, rows written, watermark), which is the log I should have written first.
 
+6. **The stack only started on my machine.** The first CI run after pushing failed at `docker compose up`: MinIO's community images on quay.io and Docker Hub went behind a login during 2025, and anonymous pulls answer "unauthorized". Locally the image had been cached since the first run, so nothing ever complained. Anyone cloning the repo would have been stuck at step one. The compose file now defaults to RustFS, which speaks the same S3 API on the same ports, keeps the service name `minio` so every endpoint is unchanged, and creates the bucket with the AWS CLI image. The MinIO image is still selectable through two environment variables for machines that have it cached over an existing volume. The same push also showed the host-side exporter could not reach `localhost` ports on Docker Desktop (an IPv6 quirk), so every example endpoint now says 127.0.0.1.
+
 ## Layout
 
 ```
